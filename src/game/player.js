@@ -8,7 +8,8 @@ const SPRINT = 7.8;
 // On-foot controller: camera-relative movement, jog/walk/sprint with stamina, jump,
 // wall collisions, and a seated pose for riding motorbikes.
 export function createPlayer(scene, colliders) {
-  const hero = makeHumanoid({ skin: '#c58c5c', shirt: '#b91c1c', pants: '#1f2937', shoes: '#f1f5f9', hair: '#120c08', cap: '#111827' });
+  // Avatar based on the owner's photo: medium-brown skin, curly black hair, black tunic and trousers.
+  const hero = makeHumanoid({ style: 'mar', skin: '#b57c58', shirt: '#121016', pants: '#0e0c13', shoes: '#16141a', hair: '#0c0a0b' });
   scene.add(hero.root);
 
   const P = { x: 0, z: 0, y: 0, vy: 0, face: Math.PI, sp: 0, phase: 0, grounded: true, dirX: 0, dirZ: 1, hp: 100, speed: 0, lie: 0, stamina: 100, tired: false, sprinting: false };

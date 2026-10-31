@@ -77,6 +77,11 @@ export const marosMap = {
     }
     const heading = Math.atan2(tangent.dx, tangent.dz);
     this.spawn = { x: sx, z: sz, face: heading, cam: heading };
+    // Start in front of the BPS Kabupaten Maros office, facing the entrance.
+    if (bps) {
+      const [bx, bz] = bps.toWorld(0, bps.dims.hd + 10);
+      this.spawn = { x: bx, z: bz, face: bps.inward, cam: bps.inward };
+    }
 
     // ---- Starter scooter + car right next to the spawn ----
     const vehicles = [];
@@ -85,7 +90,14 @@ export const marosMap = {
       const p = pointAt(leg.pts, leg.cum, Math.max(2, Math.min(leg.len - 2, s)));
       return { x: p.x, z: p.z, h: Math.atan2(p.dx, p.dz) };
     };
-    for (const [type, color, extra, offs, rad] of [['moto', 0xb91c1c, 0.9, [0.55, -0.55], 0.5], ['mpv', 0xf5f5f5, 1.6, [1.35, 0, -1.35], 1.05]]) {
+    // Starter vehicles: the red scooter and white car wait in the BPS parking bays next to the spawn.
+    if (bps) {
+      for (const [i, type, color] of [[1, 'moto', 0xb91c1c], [3, 'mpv', 0xf5f5f5]]) {
+        const p = bps.parking[i];
+        vehicles.push(new Vehicle(scene, type, color, p.x, p.z, p.h));
+      }
+    }
+    for (const [type, color, extra, offs, rad] of bps ? [] : [['moto', 0xb91c1c, 0.9, [0.55, -0.55], 0.5], ['mpv', 0xf5f5f5, 1.6, [1.35, 0, -1.35], 1.05]]) {
       let done = false;
       for (const ds of [4, -4, 8, -8, 13, -13, 19, -19]) {
         for (const dir of [1, -1]) {
