@@ -421,7 +421,24 @@ kbd {
 .menu-buttons { display: grid; gap: 10px; }
 .menu-buttons .btn-ghost { margin-top: 0; background: none; font: 600 15px 'Inter', sans-serif; cursor: pointer; }
 .panel-pause .btn-ghost { width: 100%; background: none; font: 600 15px 'Inter', sans-serif; cursor: pointer; }
-.credits { margin: 16px 0 0; font-size: 11px; line-height: 1.5; color: #7d879f; }
+.made-by {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.made-by b {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  background: linear-gradient(90deg, #4ade80, #fde68a);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.credits { margin: 12px 0 0; font-size: 11px; line-height: 1.5; color: #7d879f; }
 .controls { grid-template-columns: 1fr 1fr; column-gap: 14px; }
 .controls kbd { min-width: 96px; }
 @media (max-width: 600px) { .controls { grid-template-columns: 1fr; } }

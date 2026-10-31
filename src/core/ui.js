@@ -22,6 +22,7 @@ export function createShell(container, { title, subtitle, controls = [], accent 
           ${hasSave ? '<button class="btn-primary btn-continue">Lanjutkan</button>' : ''}
           <button class="${hasSave ? 'btn-ghost' : 'btn-primary'} btn-new">${hasSave ? 'Mulai Baru' : 'Mainkan'}</button>
         </div>
+        <div class="made-by">Dibuat oleh <b>Ammar Tyo Pasaribu</b></div>
         <p class="credits">${credits}</p>
       </div>
     </div>
