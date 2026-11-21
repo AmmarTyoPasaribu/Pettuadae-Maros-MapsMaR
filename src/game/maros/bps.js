@@ -65,7 +65,32 @@ const C = {
   roof: '#c6c6c1',
 };
 
-export function buildBPS(scene, M, colliders) {
+// Local frame of the office plot: +x along the front facade, +z out of the front door.
+export function bpsFrame(M) {
+  const b = M.buildings.find((x) => /BPS Kabupaten Maros/i.test(x.name));
+  if (!b) return null;
+  const pts = b.pts;
+  let cx = 0;
+  let cz = 0;
+  for (const p of pts) { cx += p[0]; cz += p[1]; }
+  cx /= pts.length;
+  cz /= pts.length;
+  let front = null;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], q = pts[(i + 1) % pts.length];
+    const len = Math.hypot(q[0] - a[0], q[1] - a[1]);
+    let nx = (q[1] - a[1]) / len, nz = -(q[0] - a[0]) / len;
+    if (nx * ((a[0] + q[0]) / 2 - cx) + nz * ((a[1] + q[1]) / 2 - cz) < 0) { nx = -nx; nz = -nz; }
+    if (!front || nz > front.nz) front = { len, nx, nz };
+  }
+  let depth = 0;
+  for (const p of pts) depth = Math.max(depth, Math.abs((p[0] - cx) * front.nx + (p[1] - cz) * front.nz));
+  const hw = front.len / 2;
+  // The level plot: building, terrace and the parking in front.
+  return { cx, cz, ux: front.nz, uz: -front.nx, nx: front.nx, nz: front.nz, hw, hd: depth, x0: -hw - 3, x1: hw + 3, z0: -depth - 2.5, z1: depth + 17 };
+}
+
+export function buildBPS(scene, M, colliders, base = 0) {
   const b = M.buildings.find((x) => /BPS Kabupaten Maros/i.test(x.name));
   if (!b) return null;
 
@@ -94,7 +119,7 @@ export function buildBPS(scene, M, colliders) {
   const W2L = (x, z) => [(x - cx) * ux + (z - cz) * uz, (x - cx) * nx + (z - cz) * nz];
 
   const G = new THREE.Group();
-  G.position.set(cx, 0, cz);
+  G.position.set(cx, base, cz);
   G.rotation.y = Math.atan2(-uz, ux);
   scene.add(G);
 
@@ -570,28 +595,30 @@ export function buildBPS(scene, M, colliders) {
   for (const [ax, az, bx, bz, y0, y1] of segs) {
     const [wax, waz] = L2W(ax, az);
     const [wbx, wbz] = L2W(bx, bz);
-    colliders.addSegment(wax, waz, wbx, wbz, y1, y0);
+    colliders.addSegment(wax, waz, wbx, wbz, y1 + base, y0 + base);
   }
 
-  // ---------------- Floors for the player (height-aware) ----------------
+  // ---------------- Floors for the player (height-aware, world heights) ----------------
   const insideFoot = (lx, lz) => Math.abs(lx) < iw - 0.05 && Math.abs(lz) < id - 0.05;
   const onTerrace = (lx, lz) => Math.abs(lx) < 2.7 && lz >= hd - 0.2 && lz <= hd + 2.9;
   const inStair = (lx, lz) => lx > stair.x0 - 0.1 && lx < stair.x1 + 0.05 && lz > stair.z0 && lz < stair.z1;
-  function heightAt(x, z, y = 0) {
+  // Floor under (x, z) for someone at height y, or -Infinity off the building.
+  function heightAt(x, z, y = base) {
     const [lx, lz] = W2L(x, z);
-    if (!insideFoot(lx, lz)) return onTerrace(lx, lz) ? F1 : 0;
+    if (!insideFoot(lx, lz)) return onTerrace(lx, lz) ? base + F1 : -Infinity;
+    const ly = y - base;
     let best = F1;
     if (inStair(lx, lz)) {
       const ramp = F1 + ((stair.z1 - lz) / (stair.z1 - stair.z0)) * (F2 - F1);
-      if (ramp <= y + 0.65) best = Math.max(best, ramp);
-    } else if (F2 <= y + 0.65) best = F2;
-    return best;
+      if (ramp <= ly + 0.65) best = Math.max(best, ramp);
+    } else if (F2 <= ly + 0.65) best = F2;
+    return base + best;
   }
-  function ceilingAt(x, z, y = 0) {
+  function ceilingAt(x, z, y = base) {
     const [lx, lz] = W2L(x, z);
     if (!insideFoot(lx, lz)) return Infinity;
-    if (inStair(lx, lz)) return R0;
-    return y < S0 - 0.5 ? S0 : R0;
+    if (inStair(lx, lz)) return base + R0;
+    return base + (y - base < S0 - 0.5 ? S0 : R0);
   }
 
   // Parking bays (world position + heading facing the building).
@@ -607,6 +634,7 @@ export function buildBPS(scene, M, colliders) {
     toLocal: W2L,
     inward: Math.atan2(-nx, -nz),
     dims: { hw, hd, stair, F1, F2 },
+    base,
     centre: [cx, cz],
     entrance: L2W(0, hd + 4.5),
     parking,

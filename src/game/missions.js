@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { env } from './util.js';
 
 // Delivery jobs: drive any vehicle to the yellow beacon before time runs out.
 // `pick(px, pz)` returns { x, z, name } so each map decides where jobs can go.
@@ -26,7 +27,7 @@ export function createMissions(scene, rnd, pick) {
     M.total = M.time = dist / 8.5 + 25;
     M.reward = Math.round(80 + dist * 0.5);
     M.active = true;
-    group.position.set(d.x, 0, d.z);
+    group.position.set(d.x, env.groundHeight(d.x, d.z), d.z);
     group.visible = true;
   }
 

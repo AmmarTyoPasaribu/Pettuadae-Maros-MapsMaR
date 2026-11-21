@@ -156,6 +156,7 @@ export function makeHumanoid({ skin = '#e0ac69', shirt = '#2563eb', pants = '#1f
     // phase in radians, amount 0..1 (walk -> sprint)
     run(phase, amount = 1) {
       const s = Math.sin(phase);
+      lArm.pivot.rotation.z = rArm.pivot.rotation.z = lArm.pivot.rotation.y = rArm.pivot.rotation.y = 0;
       const legA = 0.9 * amount;
       lLeg.pivot.rotation.x = s * legA;
       rLeg.pivot.rotation.x = -s * legA;
@@ -170,6 +171,7 @@ export function makeHumanoid({ skin = '#e0ac69', shirt = '#2563eb', pants = '#1f
     },
     // Standing still: gentle breathing and arm sway.
     idle(t) {
+      lArm.pivot.rotation.z = rArm.pivot.rotation.z = lArm.pivot.rotation.y = rArm.pivot.rotation.y = 0;
       lLeg.pivot.rotation.x = rLeg.pivot.rotation.x = 0;
       lLeg.lower.rotation.x = rLeg.lower.rotation.x = 0;
       lArm.pivot.rotation.x = Math.sin(t * 1.3) * 0.04;
@@ -177,6 +179,25 @@ export function makeHumanoid({ skin = '#e0ac69', shirt = '#2563eb', pants = '#1f
       lArm.lower.rotation.x = rArm.lower.rotation.x = -0.08;
       body.position.y = Math.sin(t * 2.2) * 0.008;
       body.rotation.x = 0;
+    },
+    // Swimming: treading water when still (arms sculling, upright), front crawl when moving
+    // (body tilted forward, arms windmilling, flutter kick). Returns the body tilt.
+    swim(phase, amount = 0) {
+      const tilt = 0.12 + amount * 0.95;
+      body.rotation.x = tilt;
+      body.position.y = 0;
+      const k = Math.min(1, amount * 1.6);
+      // Crawl stroke (continuous rotation) blended with sculling.
+      lArm.pivot.rotation.x = phase * k + (1 - k) * (-0.5 + Math.sin(phase * 2) * 0.25);
+      rArm.pivot.rotation.x = (phase + Math.PI) * k + (1 - k) * (-0.5 - Math.sin(phase * 2) * 0.25);
+      lArm.pivot.rotation.z = -(1 - k) * (0.9 + Math.sin(phase * 2) * 0.3);
+      rArm.pivot.rotation.z = (1 - k) * (0.9 + Math.sin(phase * 2) * 0.3);
+      lArm.lower.rotation.x = rArm.lower.rotation.x = -0.25;
+      lLeg.pivot.rotation.x = Math.sin(phase * 3) * (0.25 + 0.15 * k);
+      rLeg.pivot.rotation.x = -Math.sin(phase * 3) * (0.25 + 0.15 * k);
+      lLeg.lower.rotation.x = 0.25 + Math.max(0, Math.sin(phase * 3)) * 0.3;
+      rLeg.lower.rotation.x = 0.25 + Math.max(0, -Math.sin(phase * 3)) * 0.3;
+      return tilt;
     },
     pose(name) {
       if (name === 'jump') {

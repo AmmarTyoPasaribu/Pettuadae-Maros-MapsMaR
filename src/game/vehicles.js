@@ -2,6 +2,7 @@ import { makeVehicleModel, VEHICLE_SPECS } from '../core/vehicles3d.js';
 import { env, clamp } from './util.js';
 
 export { VEHICLE_SPECS };
+const DEAD = { thr: 0, brk: 0, steer: 0, hand: false };
 
 // Collision circles along a vehicle's length (spec.offs), for any heading.
 export function vehicleCircles(spec, x, z, h) {
@@ -20,8 +21,29 @@ export class Vehicle {
     this.car = this.model;
     this.root = this.model.root;
     scene.add(this.root);
-    Object.assign(this, { x, z, h, y: 0, vx: 0, vz: 0, yaw: 0, steer: 0, wheelRot: 0, vF: 0, vS: 0, speed: 0, slip: 0, driver: false, braking: false, color, roll: 0, pitch: 0 });
+    Object.assign(this, { x, z, h, y: 0, vy: 0, vx: 0, vz: 0, yaw: 0, steer: 0, wheelRot: 0, vF: 0, vS: 0, speed: 0, slip: 0, driver: false, braking: false, color, roll: 0, pitch: 0 });
+    Object.assign(this, { slopeP: 0, slopeR: 0, air: false, drowned: false, sink: 0, splash: false, health: 100 });
+    this.root.rotation.order = 'YXZ';
+    // Drop onto whatever is below (bridge deck rather than the river under it).
+    this.y = 1e3;
+    this.y = this.contact().y;
+    const c0 = this.contact();
+    this.slopeP = c0.p;
+    this.slopeR = c0.r;
     this.sync();
+  }
+
+  // Ground under the wheels: height plus pitch/roll from front/back and left/right contact points.
+  contact() {
+    const sp = this.spec;
+    const s = Math.sin(this.h), c = Math.cos(this.h);
+    const hl = sp.moto ? 0.7 : 1.3, hw = 0.78;
+    const yq = this.y + 0.7;
+    const at = (lx, lz) => env.groundHeight(this.x + lx * c + lz * s, this.z - lx * s + lz * c, yq);
+    const f = at(0, hl), b = at(0, -hl);
+    if (sp.moto) return { y: (f + b) / 2, p: Math.atan2(b - f, 2 * hl), r: 0 };
+    const l = at(hw, 0), r = at(-hw, 0);
+    return { y: Math.max((f + b) / 2, (l + r) / 2), p: Math.atan2(b - f, 2 * hl), r: Math.atan2(l - r, 2 * hw) };
   }
 
   get r() {
@@ -54,12 +76,18 @@ export class Vehicle {
     let vF = this.vx * sin + this.vz * cos;
     let vS = this.vx * cos - this.vz * sin;
     const speed = Math.hypot(this.vx, this.vz);
-    const { thr, brk, steer, hand } = ctl;
+    // A vehicle that went into deep water is dead: no engine, it drifts and sinks.
+    const { thr, brk, steer, hand } = this.drowned ? DEAD : ctl;
 
     if (thr) vF += (vF < -0.5 ? 24 : sp.accel * (1 - Math.max(0, vF) / sp.top)) * dt;
     if (brk) vF -= (vF > 0.5 ? 28 : 8 * Math.max(0, 1 + vF / sp.rev)) * dt;
     vF -= vF * (thr ? 0.06 : 0.5) * dt;
     if (hand) vF -= Math.sign(vF) * Math.min(Math.abs(vF), (sp.moto ? 14 : 9) * dt);
+    if (this.drowned) {
+      vF *= Math.exp(-2.2 * dt);
+      vS *= Math.exp(-2.2 * dt);
+    }
+    if (this.air) vF -= vF * 0.02 * dt;
     if (!thr && !brk && Math.abs(vF) < 0.15 && Math.abs(vS) < 0.15) {
       vF = 0;
       vS = 0;
@@ -88,7 +116,7 @@ export class Vehicle {
     if (colliders) {
       const s = Math.sin(this.h);
       const c = Math.cos(this.h);
-      const p = { x: 0, z: 0 };
+      const p = { x: 0, z: 0, y: this.y + 0.8 };
       for (const o of sp.offs) {
         p.x = this.x + s * o;
         p.z = this.z + c * o;
@@ -115,7 +143,37 @@ export class Vehicle {
     this.speed = Math.hypot(this.vx, this.vz);
     this.slip = slip;
 
-    this.y += (env.groundHeight(this.x, this.z) - this.y) * Math.min(1, dt * 14);
+    // ---- Vertical: follow the ground, fly over crests, land, float and sink in water ----
+    const ct = this.contact();
+    let floor = ct.y;
+    const wl = env.waterAt(this.x, this.z);
+    if (wl > -Infinity && wl - ct.y > (sp.moto ? 0.55 : 0.85)) {
+      if (!this.drowned) {
+        this.drowned = true;
+        this.splash = true;
+      }
+      this.sink = Math.min(1, this.sink + dt / 9);
+      floor = Math.max(ct.y, wl - (sp.moto ? 0.7 : 0.45) - this.sink * (wl - ct.y));
+    }
+    if (this.air || this.y > floor + 0.14) {
+      this.air = true;
+      this.vy -= 20 * dt;
+      this.y += this.vy * dt;
+      if (this.y <= floor) {
+        impact = Math.max(impact, -this.vy * 0.7);
+        this.y = floor;
+        this.vy = 0;
+        this.air = false;
+      }
+    } else {
+      const ny = this.y + (floor - this.y) * Math.min(1, dt * 18);
+      this.vy = clamp((ny - this.y) / Math.max(dt, 1e-3), -8, 9);
+      this.y = ny;
+    }
+    if (!this.air) {
+      this.slopeP += (ct.p - this.slopeP) * Math.min(1, dt * 10);
+      this.slopeR += (ct.r - this.slopeR) * Math.min(1, dt * 10);
+    }
     // Bikes lean into turns; cars roll away from them.
     const rollT = sp.moto ? clamp(-this.yaw * this.vF * 0.055, -0.55, 0.55) : -this.vS * 0.012;
     this.roll += (rollT - this.roll) * Math.min(1, dt * (sp.moto ? 5 : 6));
@@ -127,7 +185,7 @@ export class Vehicle {
 
   sync() {
     this.root.position.set(this.x, this.y, this.z);
-    this.root.rotation.y = this.h;
+    this.root.rotation.set(this.slopeP, this.h, this.slopeR);
     this.model.body.rotation.z = this.roll;
     this.model.body.rotation.x = this.pitch;
     for (const w of this.model.wheels) {

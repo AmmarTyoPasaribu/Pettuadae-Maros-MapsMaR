@@ -11,6 +11,8 @@ export function createSky(engine) {
   const { scene, renderer } = engine;
   const { sky } = addSky(engine, { elevation: 45, azimuth: 160, turbidity: 6, rayleigh: 1.4, envIntensity: 0.7 });
   const sunUniform = sky.material.uniforms.sunPosition.value;
+  const U = sky.material.uniforms;
+  const cGrey = new THREE.Color(0x8d969e);
 
   scene.fog = new THREE.Fog(0xbcd0e6, 150, 1100);
 
@@ -66,7 +68,8 @@ export function createSky(engine) {
   return {
     state,
     light,
-    update(timeH, focus, camPos) {
+    // wx: { cloud 0..1, rain 0..1, flash 0..1 } from the weather system.
+    update(timeH, focus, camPos, wx = { cloud: 0, rain: 0, flash: 0 }) {
       const a = ((timeH - 6) / 24) * Math.PI * 2;
       dir.set(Math.cos(a), Math.sin(a), 0.32).normalize();
       sunUniform.copy(dir);
@@ -96,7 +99,22 @@ export function createSky(engine) {
       scene.fog.color.copy(cNight).lerp(cDay, day).lerp(cDusk, (1 - smooth(0, 0.22, Math.abs(y))) * 0.65 * (1 - night * 0.6));
       renderer.toneMappingExposure = 0.62 + 0.6 * night;
 
-      stars.material.opacity = Math.max(0, night - 0.2) / 0.8;
+      // Overcast: hazier sky, weaker sun, grey fog that closes in when it rains.
+      const cl = wx.cloud, rn = wx.rain;
+      U.turbidity.value = 6 + cl * 12;
+      U.rayleigh.value = 1.4 + cl * 1.2;
+      U.mieCoefficient.value = 0.005 + cl * 0.02;
+      light.intensity *= 1 - cl * 0.62;
+      hemi.intensity *= 1 - cl * 0.15;
+      scene.environmentIntensity *= 1 - cl * 0.3;
+      scene.fog.color.lerp(cGrey.clone().multiplyScalar(0.12 + 0.88 * day), rn * 0.8);
+      scene.fog.near = 150 - rn * 110;
+      scene.fog.far = 1100 - rn * 760;
+      if (wx.flash > 0) {
+        hemi.intensity += wx.flash * 2.5;
+        hemi.color.setRGB(0.8, 0.85, 1);
+      }
+      stars.material.opacity = (Math.max(0, night - 0.2) / 0.8) * (1 - cl);
       stars.visible = stars.material.opacity > 0.01;
       stars.position.copy(camPos);
       moon.visible = y < 0.15;

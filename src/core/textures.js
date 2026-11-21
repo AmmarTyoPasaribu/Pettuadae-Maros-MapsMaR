@@ -623,3 +623,32 @@ export function soil({ repeat = 1, size = 512, seed = 61 } = {}) {
   hctx.drawImage(c, 0, 0);
   return { map: toTexture(c, repeat), normalMap: toTexture(normalFromHeight(hc, 2), repeat, false) };
 }
+
+// Tileable ripple normal map for water: a sum of periodic waves with integer wave numbers.
+export function waterNormals({ size = 256, seed = 71 } = {}) {
+  const r = rand(seed);
+  const [hc, hctx] = canvas(size);
+  const img = hctx.createImageData(size, size);
+  const waves = [];
+  while (waves.length < 16) {
+    const kx = Math.round((r() - 0.5) * 14), ky = Math.round((r() - 0.5) * 14);
+    if (kx || ky) waves.push({ kx, ky, ph: r() * Math.PI * 2, a: (0.4 + r()) / Math.hypot(kx, ky) ** 0.6 });
+  }
+  const hs = new Float32Array(size * size);
+  let lo = Infinity, hi = -Infinity;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      let h = 0;
+      for (const w of waves) h += w.a * Math.sin(((w.kx * x + w.ky * y) / size) * Math.PI * 2 + w.ph);
+      hs[y * size + x] = h;
+      lo = Math.min(lo, h);
+      hi = Math.max(hi, h);
+    }
+  }
+  for (let i = 0; i < size * size; i++) {
+    const v = ((hs[i] - lo) / (hi - lo)) * 255;
+    img.data.set([v, v, v, 255], i * 4);
+  }
+  hctx.putImageData(img, 0, 0);
+  return toTexture(normalFromHeight(hc, 5), 1, false);
+}

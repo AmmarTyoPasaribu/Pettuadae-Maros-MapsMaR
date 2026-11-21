@@ -2,8 +2,8 @@
 
 // Per-map terrain hooks; the active map sets these when it starts.
 // groundHeight(x, z, y) may use the current height y to pick a floor in multi-storey interiors;
-// ceilingAt(x, z, y) caps the camera indoors.
-export const env = { groundHeight: () => 0, ceilingAt: () => Infinity, limit: 1285 };
+// ceilingAt(x, z, y) caps the camera indoors; waterAt(x, z) is the water surface level (-Infinity on land).
+export const env = { groundHeight: () => 0, ceilingAt: () => Infinity, waterAt: () => -Infinity, limit: 1285 };
 
 export const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 export const angleDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));

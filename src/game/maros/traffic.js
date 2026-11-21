@@ -3,6 +3,7 @@ import { makeVehicleModel, VEHICLE_SPECS } from '../../core/vehicles3d.js';
 import { vehicleCircles } from '../vehicles.js';
 import { angleDiff, clamp } from '../util.js';
 import { cumulative, pointAt, offsetPolyline } from './osm.js';
+import { elev } from './elevation.js';
 
 // Typical mix on Maros streets: mostly scooters, then family cars, pickups and pete-pete.
 const MIX = [['moto', 0.46], ['mpv', 0.3], ['pickup', 0.12], ['angkot', 0.1], ['sport', 0.02]];
@@ -61,12 +62,13 @@ export function createTraffic({ scene, camera, M, getObstacles, count = 40, rnd 
     const color = palette[Math.floor(rnd() * palette.length)];
     const rider = type === 'moto' ? Math.floor(rnd() * 6) : -1;
     const model = makeVehicleModel(type, color, { rider });
+    model.root.rotation.order = 'YXZ';
     scene.add(model.root);
     const spec = VEHICLE_SPECS[type];
     return {
       type, color, spec, model, car: model, root: model.root, r: spec.r,
       legs: [], s: 0, hint: 0, v: 0, vmax: (type === 'moto' ? 0.95 : 0.85) + rnd() * 0.3,
-      x: 0, z: 0, hx: 0, hz: 1, h: 0, vx: 0, vz: 0, speed: 0, roll: 0,
+      x: 0, z: 0, y: 0, hx: 0, hz: 1, h: 0, vx: 0, vz: 0, speed: 0, roll: 0,
       tail: null, stuck: 0, ghost: 0, dead: false, kind: 'traffic', wheelRot: 0,
       circles() { return vehicleCircles(this.spec, this.x, this.z, this.h); },
     };
@@ -208,8 +210,13 @@ export function createTraffic({ scene, camera, M, getObstacles, count = 40, rnd 
         c.vz = Math.cos(c.h) * c.v;
         c.speed = c.v;
 
-        c.root.position.set(c.x, 0, c.z);
-        c.root.rotation.y = c.h;
+        // Follow the terrain and bridge decks, pitching on slopes.
+        const hl = c.spec.moto ? 0.7 : 1.3;
+        const yf = elev.surface(c.x + c.hx * hl, c.z + c.hz * hl);
+        const yb = elev.surface(c.x - c.hx * hl, c.z - c.hz * hl);
+        c.y = (yf + yb) / 2;
+        c.root.position.set(c.x, c.y, c.z);
+        c.root.rotation.set(Math.atan2(yb - yf, 2 * hl), c.h, 0);
         const turn = dh / Math.max(dt, 1e-3);
         if (c.spec.moto) {
           c.roll += (clamp(-turn * c.v * 0.012, -0.45, 0.45) - c.roll) * Math.min(1, dt * 5);

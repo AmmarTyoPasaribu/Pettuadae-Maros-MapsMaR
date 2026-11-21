@@ -7,6 +7,8 @@ import { createTraffic, createPaths } from './traffic.js';
 import { createPeds } from './peds.js';
 import { createMinimap, createFullMap } from './minimap.js';
 import { createRouter } from './route.js';
+import { elev } from './elevation.js';
+import { createAnimals } from './animals.js';
 
 const PARKED = [
   ['moto', 0.45, [0x111111, 0xf5f5f5, 0xb91c1c, 0x1d4ed8, 0x6b7280]],
@@ -20,19 +22,21 @@ const PARKED = [
 export const marosMap = {
   id: 'pettuadae',
   title: 'Pettuadae, Maros',
-  subtitle: 'Kelurahan Pettuadae, Turikale, Kabupaten Maros, dibangun dari peta sungguhan: jalan, sungai, ribuan bangunan dengan warna atap dan pepohonan dari citra satelit.',
-  credits: 'Data peta © kontributor OpenStreetMap (ODbL) · Toko & tempat: Overture Maps Foundation · Warna atap, pohon & lebar jalan diturunkan dari citra Esri World Imagery (Esri, Maxar, Earthstar Geographics)',
+  subtitle: 'Jelajahi Kelurahan Pettuadae, Turikale, Kabupaten Maros yang dibangun dari data sungguhan: jalan, Sungai Maros, ribuan rumah dan toko, ketinggian tanah asli. Naik motor, mobil, sepeda, berenang, dan hindari kejaran polisi.',
+  credits: 'Data peta © kontributor OpenStreetMap (ODbL) · Toko & tempat: Overture Maps Foundation · Warna atap, pohon & lebar jalan diturunkan dari citra Esri World Imagery (Esri, Maxar, Earthstar Geographics) · Ketinggian: AWS Terrain Tiles (SRTM, Mapzen)',
   accent: '#22c55e',
   env: { groundHeight: () => 0, limit: LIMIT },
   spawn: { x: 0, z: 0, face: 0, cam: 0 }, // set in create()
   areaName: 'Pettuadae · Turikale',
 
-  create({ scene, camera, rnd, getObstacles }) {
+  async create({ scene, camera, rnd, getObstacles, progress = async () => {} }) {
+    await progress(0.02, 'Membaca peta OpenStreetMap…');
     const M = loadMap();
     const colliders = new Colliders(24);
     const r = mulberry32(777);
     const before = new Set(scene.children);
-    const world = buildTerrain(scene, M, colliders, r);
+    const world = await buildTerrain(scene, M, colliders, r, progress);
+    await progress(0.82, 'Mengisi jalan dengan kendaraan…');
     // Static world: compute matrices once instead of every frame.
     const freeze = (o) => {
       if (o.userData.dynamic) return;
@@ -44,14 +48,21 @@ export const marosMap = {
     const legOf = createPaths();
     const router = createRouter(M);
     const bps = world.bps;
-    if (bps) {
-      // Floors and ceilings of the walk-in BPS office.
-      env.groundHeight = (x, z, y = 0) => {
+    const props = world.props;
+    // Height of whatever someone at height y stands on at (x, z): BPS floors and stairs,
+    // bridge decks (unless far below them, e.g. swimming under a bridge), terrain, kerbs, bumps.
+    env.groundHeight = (x, z, y) => {
+      if (bps) {
         const h = bps.heightAt(x, z, y);
-        return h > 0 ? h : M.roadIndex.curbAt(x, z);
-      };
-      env.ceilingAt = (x, z, y = 0) => bps.ceilingAt(x, z, y);
-    }
+        if (h > -Infinity) return h;
+      }
+      const g = elev.ground(x, z);
+      const d = elev.deck(x, z);
+      if (d !== null && (y === undefined || y > d - 2.2)) return Math.max(d, g);
+      return g + M.roadIndex.curbAt(x, z) + props.bumpAt(x, z);
+    };
+    env.ceilingAt = bps ? (x, z, y) => bps.ceilingAt(x, z, y) : () => Infinity;
+    env.waterAt = (x, z) => elev.waterAt(x, z);
 
     const probe = { x: 0, z: 0 };
     const clear = (x, z, h, offs = [1.45, 0, -1.45], rad = 1.1) => {
@@ -79,7 +90,7 @@ export const marosMap = {
     this.spawn = { x: sx, z: sz, face: heading, cam: heading };
     // Start in front of the BPS Kabupaten Maros office, facing the entrance.
     if (bps) {
-      const [bx, bz] = bps.toWorld(0, bps.dims.hd + 10);
+      const [bx, bz] = bps.toWorld(0, bps.dims.hd + 6.5);
       this.spawn = { x: bx, z: bz, face: bps.inward, cam: bps.inward };
     }
 
@@ -142,8 +153,29 @@ export const marosMap = {
       vehicles.push(new Vehicle(scene, type, colors[Math.floor(r() * colors.length)], p0.x, p0.z, p0.h));
     }
 
+    // ---- Bicycles parked in front of houses and at the warung ----
+    const BIKE_COL = [0x1d4ed8, 0xb91c1c, 0x111111, 0x15803d, 0xf59e0b, 0xdb2777, 0xf5f5f5];
+    let bikes = 0;
+    if (bps) {
+      const [bx, bz] = bps.toWorld(bps.dims.hw + 1.4, bps.dims.hd + 6.5);
+      vehicles.push(new Vehicle(scene, 'bike', 0x15803d, bx, bz, bps.inward + Math.PI / 2));
+      bikes++;
+    }
+    for (const k of world.kiosks) {
+      if (bikes > 26) break;
+      if (r() < 0.45) continue;
+      const side = r() < 0.5 ? 1 : -1;
+      const x = k.x + Math.cos(k.ry) * side * 2.2 + Math.sin(k.ry) * 1.4;
+      const z = k.z - Math.sin(k.ry) * side * 2.2 + Math.cos(k.ry) * 1.4;
+      if (colliders.containsPoint(x, z) || M.roadIndex.near(x, z, 0.2) || elev.depthAt(x, z) > 0) continue;
+      vehicles.push(new Vehicle(scene, 'bike', BIKE_COL[bikes % BIKE_COL.length], x, z, k.ry + Math.PI / 2 + (r() - 0.5) * 0.4));
+      bikes++;
+    }
+
     const traffic = createTraffic({ scene, camera, M, getObstacles, count: 40, rnd: r });
-    const peds = createPeds({ scene, M, count: 44, rnd: r });
+    await progress(0.9, 'Menghadirkan warga & hewan…');
+    const peds = createPeds({ scene, M, count: 44, rnd: r, kiosks: world.kiosks });
+    const animals = createAnimals({ scene, M, colliders });
 
     // Jobs go to real named places (shops, schools, offices, markets...), snapped to the road.
     const named = M.pois.filter((p) => p.name && p.name.length > 2);
@@ -191,18 +223,23 @@ export const marosMap = {
       vehicles,
       traffic,
       peds,
+      animals,
       pickDestination,
       streetAt,
       placeNear,
       M,
+      elev,
       route: (fx, fz, tx, tz) => router.route(fx, fz, tx, tz),
       createMinimap: (parent) => createMinimap(parent, M),
       createFullMap: (parent, opts) => createFullMap(parent, M, opts),
       stats: { ...M.stats, trees: world.treeCount, buildingTypes: world.buildingCounts, places: M.places.length, shops: world.shops },
       menuCamera(t, camera2, target) {
-        const a = t * 0.04;
-        target.set(-300, 0, 120);
-        camera2.position.set(-300 + Math.cos(a) * 380, 170, 120 + Math.sin(a) * 380);
+        // Slow orbit around the town centre and the Sungai Maros bend.
+        const a = t * 0.025 + 0.6;
+        const cx = -380 + Math.sin(t * 0.011) * 120, cz = 60 + Math.cos(t * 0.013) * 140;
+        target.set(cx, elev.ground(cx, cz) + 6, cz);
+        const px = cx + Math.cos(a) * 300, pz = cz + Math.sin(a) * 300;
+        camera2.position.set(px, Math.max(elev.ground(px, pz) + 60, 95 + Math.sin(t * 0.05) * 25), pz);
       },
     };
   },

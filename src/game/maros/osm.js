@@ -211,7 +211,7 @@ export function loadMap() {
     // Raised kerb/sidewalk height beside main roads (0 on the carriageway or elsewhere).
     curbAt(x, z) {
       const n = this.nearest(x, z, 14);
-      if (!n || n.dist < n.edge.width / 2 || n.edge.rank < 4) return 0;
+      if (!n || n.dist < n.edge.width / 2 || n.edge.rank < 4 || n.edge.bridge) return 0;
       const extra = n.edge.median ? Math.max(SIDEWALK, n.edge.median.w) : SIDEWALK;
       return n.dist < n.edge.width / 2 + extra ? 0.15 : 0;
     },
@@ -276,7 +276,7 @@ export function loadMap() {
   const rivers = [];
   for (const w of raw.waterways) {
     const width = w.width > 0 ? w.width : w.name === 'Sungai Maros' ? 42 : w.type === 'river' ? 16 : w.type === 'stream' ? 4 : 2.5;
-    for (const pts of clip(w.pts)) rivers.push({ ...w, pts, width });
+    for (const pts of clip(w.pts, 1480)) rivers.push({ ...w, pts, width });
   }
 
   const landuse = raw.landuse.filter((l) => l.pts.length >= 3 && Math.hypot(l.pts[0][0], l.pts[0][1]) < R_CLIP + 400);

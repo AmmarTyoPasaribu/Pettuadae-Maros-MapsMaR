@@ -19,6 +19,15 @@ const cyl = (r1, r2, h, x, y, z, seg = 12, rz = 0, rx = 0) => {
   return g.translate(x, y, z);
 };
 
+// Round tube from a to b ([x, y, z]).
+const tube = (a, b, r = 0.022) => {
+  const A = new THREE.Vector3(...a), B = new THREE.Vector3(...b);
+  const g = new THREE.CylinderGeometry(r, r, A.distanceTo(B), 8);
+  g.translate(0, A.distanceTo(B) / 2, 0);
+  g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), B.clone().sub(A).normalize()));
+  return g.translate(...a);
+};
+
 // Side profile [z, y] extruded across the vehicle width.
 function profile(pts, width, bevel = 0.06) {
   const s = new THREE.Shape();
@@ -54,6 +63,12 @@ const once = (k, f) => (G[k] ??= f());
 function wheelGeos(r, w) {
   return once(`wheel${r}${w}`, () => {
     const tire = cyl(r, r, w, 0, 0, 0, 24, Math.PI / 2);
+    // Thin wheels are bicycle wheels: rim, small hub and wire spokes.
+    if (w < 0.05) {
+      const hub = [cyl(0.04, 0.04, 0.1, 0, 0, 0, 8, Math.PI / 2), new THREE.TorusGeometry(r * 0.9, 0.012, 6, 28).rotateY(Math.PI / 2)];
+      for (let k = 0; k < 8; k++) hub.push(box(0.006, r * 1.78, 0.006, 0, 0, 0, (k * Math.PI) / 8));
+      return { tire: new THREE.TorusGeometry(r - 0.02, 0.025, 8, 32).rotateY(Math.PI / 2), hub: merge(hub) };
+    }
     const hub = [cyl(r * 0.62, r * 0.62, w + 0.02, 0, 0, 0, 10, Math.PI / 2)];
     for (let k = 0; k < 3; k++) hub.push(box(w + 0.03, r * 1.15, 0.05, 0, 0, 0, (k * Math.PI) / 3));
     return { tire, hub: merge(hub) };
@@ -128,6 +143,43 @@ const BODIES = {
     wheel: [0.36, 0.28],
     door: { x: -0.94, hinge: 1.1, len: 1.25, y0: 0.35, y1: 0.98, w0: 1.0, w1: 1.36 },
   }),
+  // Patrol car (Polri): MPV body, light bar on the roof, blue stripe along the sides.
+  police: () => {
+    const b = BODIES.mpv();
+    return {
+      ...b,
+      stripe: merge([box(0.02, 0.16, 3.9, 0.875, 0.72, 0.02), box(0.02, 0.16, 3.9, -0.875, 0.72, 0.02), box(1.5, 0.16, 0.02, 0, 0.72, 2.17)]),
+      sirenRed: box(0.5, 0.12, 0.24, 0.3, 1.72, -0.3),
+      sirenBlue: box(0.5, 0.12, 0.24, -0.3, 1.72, -0.3),
+      black: merge([b.black, box(1.2, 0.06, 0.3, 0, 1.64, -0.3), box(1.66, 0.3, 0.1, 0, 0.5, 2.2)]),
+    };
+  },
+  // Bicycle (sepeda): steel frame, big thin wheels, a crank that turns with the pedals.
+  bike: () => ({
+    paint: merge([
+      tube([0, 0.36, -0.02], [0, 0.88, -0.2]),
+      tube([0, 0.36, -0.02], [0, 0.8, 0.38], 0.026),
+      tube([0, 0.84, -0.18], [0, 0.82, 0.36]),
+      tube([0, 0.36, -0.02], [0, 0.34, -0.52], 0.016),
+      tube([0, 0.86, -0.2], [0, 0.34, -0.52], 0.016),
+      tube([0, 0.8, 0.38], [0, 0.34, 0.56], 0.02),
+    ]),
+    glass: box(0.04, 0.04, 0.04, 0, 0.95, 0.45),
+    black: merge([
+      box(0.17, 0.06, 0.28, 0, 0.95, -0.24),
+      tube([0, 0.88, -0.2], [0, 0.95, -0.24], 0.016),
+      tube([0, 0.8, 0.38], [0, 1.0, 0.33], 0.02),
+      tube([-0.27, 1.0, 0.31], [0.27, 1.0, 0.31], 0.016),
+      box(0.05, 0.05, 0.12, 0.29, 1.0, 0.31),
+      box(0.05, 0.05, 0.12, -0.29, 1.0, 0.31),
+      box(0.3, 0.02, 0.5, 0, 0.62, -0.42),
+    ]),
+    head: box(0.07, 0.07, 0.04, 0, 0.92, 0.47),
+    tail: box(0.06, 0.04, 0.02, 0, 0.6, -0.67),
+    wheels: [[0, 0.56], [0, -0.52]],
+    wheel: [0.34, 0.035],
+    crank: true,
+  }),
   // Matic scooter.
   moto: () => ({
     paint: merge([
@@ -190,6 +242,8 @@ export const VEHICLE_SPECS = {
   angkot: { r: 1.0, offs: [1.25, 0, -1.25], accel: 10, top: 30, rev: 7, steerMax: 0.55, wheelbase: 2.5, cam: 7.6, label: 'Pete-pete' },
   sport: { r: 1.05, offs: [1.45, 0, -1.45], accel: 17, top: 48, rev: 9, steerMax: 0.55, wheelbase: 2.75, cam: 7.4, label: 'Mobil sport' },
   moto: { r: 0.45, offs: [0.55, -0.55], accel: 12, top: 27, rev: 3, steerMax: 0.7, wheelbase: 1.25, cam: 4.8, label: 'Motor', moto: true },
+  bike: { r: 0.4, offs: [0.45, -0.45], accel: 4.2, top: 8.5, rev: 1.5, steerMax: 0.75, wheelbase: 1.08, cam: 4.4, label: 'Sepeda', moto: true, bike: true },
+  police: { r: 1.0, offs: [1.35, 0, -1.35], accel: 16, top: 42, rev: 9, steerMax: 0.58, wheelbase: 2.65, cam: 7.4, label: 'Mobil polisi', police: true },
 };
 
 export function makeVehicleModel(type, color, { rider = -1 } = {}) {
@@ -213,6 +267,24 @@ export function makeVehicleModel(type, color, { rider = -1 } = {}) {
   add(body, B.head, m.head, false);
   add(body, B.tail, tail, false);
   if (rider >= 0) add(body, riderGeo(rider), m.rider);
+  // Police: blue side stripe and a flashing red/blue light bar.
+  let siren = null;
+  if (B.stripe) {
+    add(body, B.stripe, once('stripeMat', () => new THREE.MeshStandardMaterial({ color: 0x1e3a8a, roughness: 0.5 })), false);
+    const red = new THREE.MeshStandardMaterial({ color: 0x550000, emissive: 0xff1a1a, emissiveIntensity: 0.3 });
+    const blue = new THREE.MeshStandardMaterial({ color: 0x000a55, emissive: 0x1a4dff, emissiveIntensity: 0.3 });
+    add(body, B.sirenRed, red, false);
+    add(body, B.sirenBlue, blue, false);
+    siren = { red, blue };
+  }
+  // Bicycle crank with two pedals.
+  let crank = null;
+  if (B.crank) {
+    crank = new THREE.Group();
+    crank.position.set(0, 0.36, -0.02);
+    add(crank, once('crankGeo', () => merge([box(0.03, 0.34, 0.03, 0.06, 0, 0), box(0.03, 0.34, 0.03, -0.06, 0, 0).rotateX(Math.PI), box(0.12, 0.03, 0.08, 0.13, 0.17, 0), box(0.12, 0.03, 0.08, -0.13, -0.17, 0), cyl(0.09, 0.09, 0.02, 0.04, 0, 0, 14, Math.PI / 2)])), m.black);
+    body.add(crank);
+  }
 
   // Driver door on a hinge so it can swing open (see Vehicle.setDoor).
   const doors = [];
@@ -237,8 +309,8 @@ export function makeVehicleModel(type, color, { rider = -1 } = {}) {
     steerG.add(spin);
     add(spin, tire, m.tire);
     add(spin, hub, m.chrome, false);
-    (type === 'moto' ? body : root).add(steerG);
+    (type === 'moto' || type === 'bike' ? body : root).add(steerG);
     return { steerG, spin, front: z > 0, x, z };
   });
-  return { root, body, wheels, tail, paint, type, doors, door: B.door || null };
+  return { root, body, wheels, tail, paint, type, doors, door: B.door || null, siren, crank };
 }

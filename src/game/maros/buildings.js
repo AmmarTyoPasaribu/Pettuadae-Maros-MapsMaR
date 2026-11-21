@@ -4,6 +4,7 @@ import * as tex from '../../core/textures.js';
 import { pointInPoly, closestOnSegment } from '../colliders.js';
 import { createAtlases, drawShopSign, signPlane, SHOP_STYLE } from './signs.js';
 import { pointAt } from './osm.js';
+import { elev } from './elevation.js';
 
 // Turns OSM footprints into Maros-style buildings: plastered houses with hip/gable roofs,
 // shophouses (ruko) with signboards along the main roads, Bugis stilt houses in the lanes,
@@ -230,8 +231,8 @@ export function buildBuildings(scene, M, colliders, rnd) {
     return true;
   }
 
-  // Signboard + awning on the wall that faces the nearest main road.
-  function shopFront(c, b, road, h, shops = []) {
+  // The footprint wall that faces a road point (midpoint, outward normal, length).
+  function facing(b, road) {
     const pts = b.pts;
     let best = null;
     for (let i = 0; i < pts.length; i++) {
@@ -245,8 +246,14 @@ export function buildBuildings(scene, M, colliders, rnd) {
       const rx = road.x - mx, rz = road.z - mz;
       const rl = Math.hypot(rx, rz) || 1;
       const score = len * ((nx * rx + nz * rz) / rl);
-      if (score > 0 && (!best || score > best.score)) best = { score, mx, mz, nx, nz, len };
+      if (score > 0 && (!best || score > best.score)) best = { score, mx, mz, nx, nz, len, dist: nx * rx + nz * rz };
     }
+    return best;
+  }
+
+  // Signboard + awning on the wall that faces the nearest main road.
+  function shopFront(c, b, road, h, shops = []) {
+    const best = facing(b, road);
     if (!best) return;
     const ry = Math.atan2(best.nx, best.nz);
     // Edge direction (along the wall) for placing several signs side by side.
@@ -270,7 +277,7 @@ export function buildBuildings(scene, M, colliders, rnd) {
   }
 
   function flag(c, x, z) {
-    c.roofs.push(colorize(cylinder(0.06, 0.08, 9, x, 0, z, 8), '#d9dce1'));
+    c.roofs.push(colorize(cylinder(0.06, 0.08, 10.5, x, -1.5, z, 8), '#d9dce1'));
     c.roofs.push(colorize(boxAt(1.6, 0.5, 0.03, x + 0.82, 8.6, z), '#d4141c'));
     c.roofs.push(colorize(boxAt(1.6, 0.5, 0.03, x + 0.82, 8.1, z), '#f8f8f8'));
   }
@@ -285,20 +292,41 @@ export function buildBuildings(scene, M, colliders, rnd) {
 
   function dome(x, y, z, r) {
     const d = new THREE.Mesh(new THREE.SphereGeometry(r, 28, 14, 0, Math.PI * 2, 0, Math.PI / 2), domeMat);
-    d.position.set(x, y, z);
+    d.position.set(x, y + lift, z);
     d.castShadow = true;
     scene.add(d);
     const tip = new THREE.Mesh(new THREE.ConeGeometry(Math.max(0.15, r * 0.06), Math.max(1, r * 0.35), 8), domeMat);
-    tip.position.set(x, y + r + Math.max(0.5, r * 0.17), z);
+    tip.position.set(x, y + lift + r + Math.max(0.5, r * 0.17), z);
     scene.add(tip);
   }
 
+  // Geometry added to a chunk since `mark` is lifted onto the building's ground level.
+  const lists = (c) => [c.house, c.ruko, c.office, c.wood, c.roofs, ...Object.values(c.signs)];
+  const mark = (c) => new Map(lists(c).map((l) => [l, l.length]));
+  const raise = (c, before, y) => {
+    for (const l of lists(c)) for (let i = before.get(l) || 0; i < l.length; i++) l[i].translate(0, y, 0);
+  };
+
   const counts = {};
+  const details = { fronts: [], roofs: [], acs: [] };
+  let lift = 0;
+  let sink = 0.2;
   for (const b of M.buildings) {
     if (/BPS Kabupaten Maros/i.test(b.name)) continue; // hand-built in bps.js
     const type = classify(b, M);
     counts[type] = (counts[type] || 0) + 1;
     const c = chunk(b.cx, b.cz);
+    const before = mark(c);
+    // Floor at the highest ground under the footprint; the walls reach down to the lowest point.
+    let gmin = elev.ground(b.cx, b.cz), gmax = gmin;
+    for (const [x, z] of b.pts) {
+      const g = elev.ground(x, z);
+      gmin = Math.min(gmin, g);
+      gmax = Math.max(gmax, g);
+    }
+    lift = gmax + 0.05;
+    sink = lift - gmin + 0.3;
+    b.base = lift;
     const o = b.obb;
     const fill = b.area / Math.max(1, o.lu * o.lv);
     const roofCol = roofColor(b.roof, rnd);
@@ -307,7 +335,7 @@ export function buildBuildings(scene, M, colliders, rnd) {
 
     if (type === 'markaz') {
       h = 13;
-      walls(c, 'office', b.pts, -0.2, h + 0.2, '#f6f4ee', '#d5d7d9', 1);
+      walls(c, 'office', b.pts, -sink, h + sink, '#f6f4ee', '#d5d7d9', 1);
       const r = Math.min(o.lu, o.lv) * 0.22;
       c.roofs.push(colorize(cylinder(r * 0.95, r * 0.95, 3, o.cx, h, o.cz, 32), '#f0eee8'));
       dome(o.cx, h + 3, o.cz, r);
@@ -327,7 +355,7 @@ export function buildBuildings(scene, M, colliders, rnd) {
       landmarks.push({ name: b.name, x: o.cx, z: o.cz });
     } else if (type === 'bupati') {
       h = 8;
-      walls(c, 'office', b.pts, -0.2, h + 0.2, '#f3ecd9', roofCol, 1);
+      walls(c, 'office', b.pts, -sink, h + sink, '#f3ecd9', roofCol, 1);
       c.roofs.push(colorize(roofGeo(o, h, Math.min(5, Math.min(o.lu, o.lv) * 0.25), 1.2, 'hip'), roofCol));
       c.roofs.push(colorize(cylinder(3, 3, 16, o.cx, 0, o.cz, 24), '#f8f6f0'));
       dome(o.cx, 16, o.cz, 3.2);
@@ -336,7 +364,7 @@ export function buildBuildings(scene, M, colliders, rnd) {
       landmarks.push({ name: b.name, x: o.cx, z: o.cz });
     } else if (type === 'mosque') {
       h = b.area > 250 ? 7 : 5;
-      walls(c, 'office', b.pts, -0.2, h + 0.2, '#f7f5ef', roofCol, 1);
+      walls(c, 'office', b.pts, -sink, h + sink, '#f7f5ef', roofCol, 1);
       const r = Math.max(2.2, Math.min(o.lu, o.lv) * 0.3);
       c.roofs.push(colorize(cylinder(r * 0.95, r * 0.95, 1.2, o.cx, h, o.cz, 24), '#efede6'));
       dome(o.cx, h + 1.2, o.cz, r);
@@ -345,11 +373,11 @@ export function buildBuildings(scene, M, colliders, rnd) {
       dome(top[0], top[1], top[2], 1.0);
     } else if (type === 'market' || type === 'warehouse') {
       h = type === 'market' ? 5.5 : 6.5;
-      walls(c, type === 'market' ? 'ruko' : 'office', b.pts, -0.2, h + 0.2, pick(RUKO_WALLS), roofCol, lit);
+      walls(c, type === 'market' ? 'ruko' : 'office', b.pts, -sink, h + sink, pick(RUKO_WALLS), roofCol, lit);
       if (fill > 0.6) c.roofs.push(colorize(roofGeo(o, h, Math.min(3.5, Math.min(o.lu, o.lv) * 0.12), 0.8, 'gable'), roofCol));
     } else if (type === 'office' || type === 'school' || type === 'museum') {
       h = b.levels ? b.levels * 3.6 + 0.4 : rnd() < (type === 'school' ? 0.35 : 0.6) ? 7.4 : 4.0;
-      walls(c, 'office', b.pts, -0.2, h + 0.2, type === 'museum' ? '#fbfaf5' : pick(OFFICE_WALLS), roofCol, lit);
+      walls(c, 'office', b.pts, -sink, h + sink, type === 'museum' ? '#fbfaf5' : pick(OFFICE_WALLS), roofCol, lit);
       if (fill > 0.68) c.roofs.push(colorize(roofGeo(o, h, Math.min(4, Math.min(o.lu, o.lv) * 0.3), 0.9, 'hip'), roofCol));
       if (type === 'school' && b.name) {
         const road = M.roadIndex.nearest(o.cx, o.cz, 120);
@@ -359,14 +387,14 @@ export function buildBuildings(scene, M, colliders, rnd) {
     } else if (type === 'ruko') {
       const floors = b.levels || (rnd() < 0.1 ? 1 : rnd() < 0.62 ? 2 : 3);
       h = floors * 3.2 + 0.3;
-      walls(c, 'ruko', b.pts, -0.2, h + 0.2, pick(RUKO_WALLS), roofCol, lit);
+      walls(c, 'ruko', b.pts, -sink, h + sink, pick(RUKO_WALLS), roofCol, lit);
       if (rnd() < 0.7 || fill < 0.7) c.roofs.push(colorize(parapet(b.pts, b.cx, b.cz, h, 0.9), '#e9e5dc'));
       else c.roofs.push(colorize(roofGeo(o, h, Math.min(2.2, Math.min(o.lu, o.lv) * 0.3), 0.4, 'gable'), roofCol));
       const road = M.roadIndex.nearest(b.cx, b.cz, 40, 4);
       if (road && !b.shops) shopFront(c, b, road, h);
     } else if (type === 'shed') {
       h = 2.6;
-      walls(c, 'house', b.pts, -0.2, h + 0.2, pick(HOUSE_WALLS), roofCol, 0);
+      walls(c, 'house', b.pts, -sink, h + sink, pick(HOUSE_WALLS), roofCol, 0);
       if (fill > 0.6) c.roofs.push(colorize(roofGeo(o, h, 0.7, 0.3, 'gable'), roofCol));
     } else {
       // House. Some lane houses are Bugis rumah panggung on stilts.
@@ -382,14 +410,14 @@ export function buildBuildings(scene, M, colliders, rnd) {
           for (const v of [-0.45, 0.45]) {
             const x = o.cx + u * o.lu * cu - v * o.lv * su;
             const z = o.cz + u * o.lu * su + v * o.lv * cu;
-            c.roofs.push(colorize(cylinder(0.12, 0.14, y0, x, 0, z, 6), '#4a2f1b'));
+            c.roofs.push(colorize(cylinder(0.12, 0.14, y0 + sink, x, -sink, z, 6), '#4a2f1b'));
           }
         }
         c.roofs.push(colorize(boxAt(0.9, 0.12, 1.6, o.cx + (o.lu / 2 + 0.6) * cu, 1.0, o.cz + (o.lu / 2 + 0.6) * su, -o.ang + Math.PI / 2).rotateZ(0), '#5a3a20'));
         h = y0 + h;
       } else {
         h = b.levels ? b.levels * 3.2 + 0.2 : b.area > 70 && rnd() < 0.22 ? 6.6 : 3.4;
-        walls(c, 'house', b.pts, -0.2, h + 0.2, pick(HOUSE_WALLS), roofCol, lit);
+        walls(c, 'house', b.pts, -sink, h + sink, pick(HOUSE_WALLS), roofCol, lit);
         if (fill > 0.72 && o.lu > 2.5 && o.lv > 2.5) {
           const kind = rnd() < 0.55 ? 'hip' : 'gable';
           const rise = Math.max(0.9, Math.min(kind === 'hip' ? 2.3 : 2.6, Math.min(o.lu, o.lv) * (kind === 'hip' ? 0.34 : 0.4)));
@@ -401,11 +429,35 @@ export function buildBuildings(scene, M, colliders, rnd) {
       const road = M.roadIndex.nearest(b.cx, b.cz, 60);
       if (road) shopFront(c, b, road, h, b.shops);
     }
-    colliders.addPolygon(b.pts, h);
+    raise(c, before, lift);
+    colliders.addPolygon(b.pts, h + lift);
+    b.top = h + lift;
+
+    // Spots for small details (props.js): fences in front of houses, water tanks, AC units.
+    if (type === 'house' && !b.shops && b.area > 30) {
+      const road = M.roadIndex.nearest(b.cx, b.cz, 18);
+      const f = road && facing(b, road);
+      if (f && f.dist > road.edge.width / 2 + 2.4 && f.dist < 16) details.fronts.push({ ...f, y: lift, roadHalf: road.edge.width / 2, b });
+      if (f && rnd() < 0.3) details.roofs.push({ x: b.cx - f.nx * (Math.min(o.lu, o.lv) / 2 + 1.3), z: b.cz - f.nz * (Math.min(o.lu, o.lv) / 2 + 1.3), y: lift, tower: true });
+    }
+    if ((type === 'ruko' || type === 'office') && fill > 0.6) {
+      if (rnd() < 0.55) details.roofs.push({ x: o.cx + (rnd() - 0.5) * o.lu * 0.4, z: o.cz + (rnd() - 0.5) * o.lv * 0.4, y: h + lift, tower: false });
+      const k = Math.floor(rnd() * b.pts.length);
+      const a = b.pts[k], q = b.pts[(k + 1) % b.pts.length];
+      const len = Math.hypot(q[0] - a[0], q[1] - a[1]);
+      if (len > 3) {
+        let nx = (q[1] - a[1]) / len, nz = -(q[0] - a[0]) / len;
+        const mx = (a[0] + q[0]) / 2, mz = (a[1] + q[1]) / 2;
+        if (nx * (mx - b.cx) + nz * (mz - b.cz) < 0) { nx = -nx; nz = -nz; }
+        details.acs.push({ x: mx + nx * 0.3, z: mz + nz * 0.3, y: lift + Math.min(h - 1, 2.6 + rnd() * 3), ry: Math.atan2(nx, nz) });
+      }
+    }
   }
+  lift = 0;
 
   // ---------------- Kiosks / warung for places without a mapped building ----------------
   const kiosks = [];
+  const kioskInfo = [];
   for (const p of kioskPlaces) {
     const road = M.roadIndex.nearest(p.x, p.z, 40);
     if (!road) continue;
@@ -430,16 +482,20 @@ export function buildBuildings(scene, M, colliders, rnd) {
     fz /= fl || 1;
     const ry = Math.atan2(fx, fz);
     const c = chunk(x, z);
+    const before = mark(c);
+    const ky = elev.surface(x, z);
     const st = SHOP_STYLE[p.group] || SHOP_STYLE.other;
     const part = (w, hh, d, lx, ly, lz, color) => c.roofs.push(colorize(new THREE.BoxGeometry(w, hh, d).translate(lx, ly, lz).rotateY(ry).translate(x, 0, z), color));
-    part(2.6, 2.3, 2.2, 0, 1.15, 0, pick(['#e9dcc0', '#d4e4d0', '#f1d9b5', '#c9b08a']));
+    part(2.6, 2.9, 2.2, 0, 0.85, 0, pick(['#e9dcc0', '#d4e4d0', '#f1d9b5', '#c9b08a']));
     part(3.2, 0.08, 2.9, 0, 2.38, 0.1, '#8a9096');
     part(1.9, 0.95, 0.04, 0, 1.45, 1.11, '#2a1f16');
     part(2.2, 0.1, 0.5, 0, 0.95, 1.3, '#a8774a');
     if (st.awning) c.roofs.push(colorize(new THREE.BoxGeometry(2.8, 0.06, 1.1).rotateX(0.2).translate(0, 2.05, 1.6).rotateY(ry).translate(x, 0, z), st.awning));
     (c.signs[p.slot.atlas] ||= []).push(signPlane(2.5, 0.5, p.slot.uv, ry, x + fx * 1.13, 2.62, z + fz * 1.13));
+    raise(c, before, ky);
     const corners = [[-1.3, -1.1], [1.3, -1.1], [1.3, 1.1], [-1.3, 1.1]].map(([lx, lz]) => [x + lx * Math.cos(ry) + lz * Math.sin(ry), z - lx * Math.sin(ry) + lz * Math.cos(ry)]);
-    colliders.addPolygon(corners, 2.4);
+    colliders.addPolygon(corners, 2.4 + ky);
+    kioskInfo.push({ x, z, y: ky, ry, place: p });
   }
 
   for (const c of chunks.values()) {
@@ -465,6 +521,8 @@ export function buildBuildings(scene, M, colliders, rnd) {
 
   return {
     kiosks: kiosks.length,
+    kioskInfo,
+    details,
     shopsOnBuildings: signed.length - kioskPlaces.length,
     counts,
     landmarks,
